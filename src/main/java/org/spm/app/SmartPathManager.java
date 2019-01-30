@@ -20,18 +20,8 @@ import org.onlab.packet.MacAddress;
 import org.onosproject.app.ApplicationAdminService;
 import org.onosproject.core.ApplicationId;
 import org.onosproject.core.CoreService;
-import org.onosproject.net.ConnectPoint;
-import org.onosproject.net.Device;
-import org.onosproject.net.DeviceId;
-import org.onosproject.net.Host;
-import org.onosproject.net.Link;
-import org.onosproject.net.Path;
-import org.onosproject.net.Port;
-import org.onosproject.net.PortNumber;
-import org.onosproject.net.config.NetworkConfigEvent;
-import org.onosproject.net.config.NetworkConfigListener;
-import org.onosproject.net.device.DeviceEvent;
-import org.onosproject.net.device.DeviceListener;
+import org.onosproject.event.Event;
+import org.onosproject.net.*;
 import org.onosproject.net.device.DeviceService;
 import org.onosproject.net.device.PortStatistics;
 import org.onosproject.net.flow.*;
@@ -43,15 +33,14 @@ import org.onosproject.net.flowobjective.FlowObjectiveService;
 import org.onosproject.net.flowobjective.ForwardingObjective;
 import org.onosproject.net.host.HostService;
 
+import org.onosproject.net.link.LinkEvent;
+import org.onosproject.net.topology.TopologyEvent;
+import org.onosproject.net.topology.TopologyListener;
 import org.onosproject.net.topology.TopologyService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-import java.util.OptionalInt;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -94,6 +83,7 @@ public class SmartPathManager implements ServiceSPM {
     @Reference(cardinality = ReferenceCardinality.MANDATORY_UNARY)
     protected FlowObjectiveService flowObjectiveService;
 
+    private final TopologyListener topologyListener = new InternalTopologyListener();
 
     private ApplicationId appId;
     private ApplicationId onosforwarding;
@@ -131,6 +121,8 @@ public class SmartPathManager implements ServiceSPM {
             }
         }
 
+        topologyService.addListener(topologyListener);
+
         log.info("### Started " + appId.name() + " with id " + appId.id() + " ###");
     }
 
@@ -149,12 +141,18 @@ public class SmartPathManager implements ServiceSPM {
     }
 
     @Override
-    public void provisionedHost(IntentSPM intentSPM) {
+    public void intentCreate(IntentSPM intentSPM) {
 
         log.info("### Setting local Flows for Host: " + intentSPM.getHostMac() + " ###");
         setFlow(DeviceId.deviceId(intentSPM.getSwitchID()), null, MacAddress.valueOf(intentSPM.getHostMac()), PortNumber.portNumber(intentSPM.getIngressPort()), LOCAL_RULE_PRIO);
 
         deployBestShortestPath(MacAddress.valueOf(intentSPM.getHostMac()), DeviceId.deviceId(intentSPM.getSwitchID()));
+    }
+
+    @Override
+    public void intentDelete(IntentSPM intentSPM) {
+
+        cleanFlowRules(MacAddress.valueOf(intentSPM.getHostMac()));
     }
 
     public void deployBestShortestPath(MacAddress srcHostMac, DeviceId srcDeviceId) {
@@ -176,10 +174,8 @@ public class SmartPathManager implements ServiceSPM {
 
                 /* exclude A==B combinations & ...**/
                 /*  exclude Host-AB-pairs connected to the same switch **/
-                if (dstDeviceId.toString().equals(srcDeviceId.toString())) {
+                if (!dstDeviceId.toString().equalsIgnoreCase(srcDeviceId.toString())) {
 
-                    // do nothing, if hostA and hostB are connected to the same switch
-                } else {
                     // Deploy FlowRules for Flow (A->B,B->A)
 
                     if (flowRuleExists(srcHostMac, dstHost.mac())) {
@@ -512,5 +508,78 @@ public class SmartPathManager implements ServiceSPM {
         }
 
         return rate;
+    }
+
+    private void cleanFlowRules(MacAddress srcMac) {
+
+        for (Device device : deviceService.getDevices()) {
+
+            log.info("Searching for flow rules to remove from: {}", device.id());
+
+            for (FlowEntry r : flowRuleService.getFlowEntries(device.id())) {
+
+                boolean matchesSrc = false, matchesDst = false;
+
+                for (Instruction i : r.treatment().allInstructions()) {
+                    if (i.type() == Instruction.Type.OUTPUT) {
+                        // if the flow has matching src and dst
+                        for (Criterion cr : r.selector().criteria()) {
+                            if (cr.type() == Criterion.Type.ETH_DST) {
+                                if (((EthCriterion) cr).mac().equals(srcMac)) {
+                                    matchesDst = true;
+                                }
+                            } else if (cr.type() == Criterion.Type.ETH_SRC) {
+                                if (((EthCriterion) cr).mac().equals(srcMac)) {
+                                    matchesSrc = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (matchesDst || matchesSrc) {
+                    log.info("Removed flow rule from device: {}", device.id());
+                    flowRuleService.removeFlowRules((FlowRule) r);
+                }
+            }
+        }
+    }
+
+    private class InternalTopologyListener implements TopologyListener {
+        @Override
+        public void event(TopologyEvent event) {
+            List<Event> reasons = event.reasons();
+            Set<HostId> hostIds = new HashSet<HostId>();
+
+            if (reasons != null) {
+                reasons.forEach(re -> {
+                    if (re instanceof LinkEvent) {
+                        LinkEvent le = (LinkEvent) re;
+                        if (le.type() == LinkEvent.Type.LINK_REMOVED) {
+                            hostIds.add(le.subject().src().hostId());
+                        }
+                    }
+                });
+            }
+
+            bulkCleanFlowRules(hostIds);
+            bulkDeployBestShortestPath(hostIds);
+        }
+    }
+
+    private void bulkCleanFlowRules(Set<HostId> hostIds) {
+
+        for (HostId hostId : hostIds) {
+
+            cleanFlowRules(hostId.mac());
+        }
+    }
+
+    private void bulkDeployBestShortestPath(Set<HostId> hostIds) {
+
+        for (HostId hostId : hostIds) {
+
+            deployBestShortestPath(hostId.mac(), hostService.getHost(hostId).location().deviceId());
+        }
     }
 }

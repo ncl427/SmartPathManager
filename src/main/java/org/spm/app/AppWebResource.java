@@ -24,7 +24,9 @@ import org.slf4j.LoggerFactory;
 
 import javax.ws.rs.Consumes;
 import javax.ws.rs.POST;
+import javax.ws.rs.DELETE;
 import javax.ws.rs.Path;
+import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
@@ -38,17 +40,11 @@ public class AppWebResource extends AbstractWebResource {
 
     private final Logger log = LoggerFactory.getLogger(getClass());
 
-    /**
-     * Create Intent.
-     *
-     * @return 200 OK
-     */
-
     @POST
-    @Path("provision/host")
+    @Path("intent/create")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response provisionedHost(InputStream inputStream) {
+    public Response intentCreate(InputStream inputStream) {
 
         try {
 
@@ -57,7 +53,7 @@ public class AppWebResource extends AbstractWebResource {
 
             IntentSPM intentSPM = mapper.readValue(inputStream, IntentSPM.class);
             ServiceSPM serviceSPM = get(ServiceSPM.class);
-            serviceSPM.provisionedHost(intentSPM);
+            serviceSPM.intentCreate(intentSPM);
 
         } catch (Exception ex) {
 
@@ -71,5 +67,30 @@ public class AppWebResource extends AbstractWebResource {
         node.put("Host", "Host Provisioned Successfully.");
         node.put("Intent", "Proactive Load Balancing Intent Created Successfully.");
         return ok(node).build();
+    }
+
+    @DELETE
+    @Path("{appId}/{srcMac}")
+    public Response intentDelete(@PathParam("appId") String appId,
+                                     @PathParam("srcMac") String srcMac) {
+
+        try {
+
+            IntentSPM intentSPM = new IntentSPM();
+
+            intentSPM.setAppId(appId);
+            intentSPM.setHostMac(srcMac);
+
+            ServiceSPM serviceSPM = get(ServiceSPM.class);
+            serviceSPM.intentDelete(intentSPM);
+
+        } catch (Exception ex) {
+
+            return Response.status(Response.Status.INTERNAL_SERVER_ERROR).
+                    entity(ex.toString())
+                    .build();
+        }
+
+        return Response.noContent().build();
     }
 }

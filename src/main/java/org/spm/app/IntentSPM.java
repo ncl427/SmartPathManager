@@ -8,7 +8,15 @@ public class IntentSPM {
     private String hostMac;
     private String switchID;
     private String ingressPort;
+    private String appId;
 
+    public String getAppId() {
+        return appId;
+    }
+
+    public void setAppId(String appId) {
+        this.appId = appId;
+    }
 
     public String getHostMac() {
         return hostMac;
