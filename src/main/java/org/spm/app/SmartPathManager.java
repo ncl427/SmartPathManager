@@ -41,6 +41,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -143,16 +144,52 @@ public class SmartPathManager implements ServiceSPM {
     @Override
     public void intentCreate(IntentSPM intentSPM) {
 
-        log.info("### Setting local Flows for Host: " + intentSPM.getHostMac() + " ###");
+        long start = System.currentTimeMillis();
+        log.info("Starting Time : " + start);
+
+        log.info("### Provisioned Host: " + intentSPM.getHostMac() + " ###");
         setFlow(DeviceId.deviceId(intentSPM.getSwitchID()), null, MacAddress.valueOf(intentSPM.getHostMac()), PortNumber.portNumber(intentSPM.getIngressPort()), LOCAL_RULE_PRIO);
 
         deployBestShortestPath(MacAddress.valueOf(intentSPM.getHostMac()), DeviceId.deviceId(intentSPM.getSwitchID()));
+
+        long finish = System.currentTimeMillis();
+        log.info("End Time : " + finish);
+
+        long timeElapsed = finish - start;
+
+        // long minutes = (milliseconds / 1000) / 60;
+        long minutes = TimeUnit.MILLISECONDS.toMinutes(timeElapsed);
+
+        // long seconds = (milliseconds / 1000);
+        long seconds = TimeUnit.MILLISECONDS.toSeconds(timeElapsed);
+
+        log.info("Total Time in MiliSecond : " + timeElapsed);
+        log.info("Total Time in Second : " + seconds);
+        log.info("Total Time in Minutes : " + minutes);
     }
 
     @Override
     public void intentDelete(IntentSPM intentSPM) {
 
+        long start = System.currentTimeMillis();
+        log.info("Starting Time : " + start);
+
         cleanFlowRules(MacAddress.valueOf(intentSPM.getHostMac()));
+
+        long finish = System.currentTimeMillis();
+        log.info("End Time : " + finish);
+
+        long timeElapsed = finish - start;
+
+        // long minutes = (milliseconds / 1000) / 60;
+        long minutes = TimeUnit.MILLISECONDS.toMinutes(timeElapsed);
+
+        // long seconds = (milliseconds / 1000);
+        long seconds = TimeUnit.MILLISECONDS.toSeconds(timeElapsed);
+
+        log.info("Total Time in MiliSecond : " + timeElapsed);
+        log.info("Total Time in Second : " + seconds);
+        log.info("Total Time in Minutes : " + minutes);
     }
 
     public void deployBestShortestPath(MacAddress srcHostMac, DeviceId srcDeviceId) {
@@ -183,25 +220,18 @@ public class SmartPathManager implements ServiceSPM {
                         return;
                     }
 
-                    log.info("Evaluating paths between host a and b");
+                    log.info("Evaluating paths between host "+ srcHostMac.toString() +" and " + dstHost.mac().toString());
                     Set<Path> ps = topologyService.getPaths(topologyService.currentTopology(), srcDeviceId, dstDeviceId);
-                    log.info("Path-size, by normal service:: " + ps.size());
+                    log.info("Path-size: " + ps.size());
 
-                    Stream<Path> pstream = topologyService.getKShortestPaths(topologyService.currentTopology(), srcDeviceId, dstDeviceId);
-
-                    deployBestShortestPath(pstream, srcHostMac, dstHost.mac());
+                    deployBestShortestPath(ps, srcHostMac, dstHost.mac());
                 }
             }
         else
             log.info("### There is only " + hostList.size() + " hosts, nothing to do. ###");
     }
 
-    public void deployBestShortestPath(Stream<Path> pstream, MacAddress srcMac, MacAddress dstMac) {
-
-        //Convert a Stream to Set
-        Set<Path> pathSet = pstream.collect(Collectors.toSet());
-
-        log.info("K-Path-size: " + pathSet.size());
+    public void deployBestShortestPath(Set<Path> pathSet, MacAddress srcMac, MacAddress dstMac) {
 
         Path bestPath = bestPathInSet(pathSet);
 
@@ -213,82 +243,9 @@ public class SmartPathManager implements ServiceSPM {
         }
     }
 
-    public boolean flowRuleExists(MacAddress srcMac, MacAddress dstMac) {
-
-        // This block searches for already exiting flow rules for this host-pair
-        for (FlowRule flowRule : flowRuleService.getFlowEntriesById(appId)) {
-            MacAddress src = null;
-            MacAddress dst = null;
-
-            Criterion criterion = flowRule.selector().getCriterion(ETH_SRC);
-            if (criterion != null)
-                src = ((EthCriterion) criterion).mac();
-
-            criterion = flowRule.selector().getCriterion(ETH_DST);
-            if (criterion != null)
-                dst = ((EthCriterion) criterion).mac();
-
-            if (dst != null && src != null) {
-                if (srcMac.toString().matches(src.toString()) && dstMac.toString().matches(dst.toString())) {
-                    return true;
-                }
-                if (dstMac == dst && srcMac == src) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    public void setFLows(List<Link> linkList, MacAddress srcMac, MacAddress dstMac) {
-
-        for (Link link : linkList) {
-            log.info("### Flow-Direction: Forward (A->B) ###");
-            DeviceId srcSwitch = link.src().deviceId();
-            PortNumber outPort = link.src().port();
-            setFlow(srcSwitch, srcMac, dstMac, outPort, DEFAULT_RULE_PRIO);
-
-            log.info("### Flow-Direction: Forward (B->A) ###");
-            DeviceId dstSwitch = link.dst().deviceId();
-            outPort = link.dst().port();
-            setFlow(dstSwitch, dstMac, srcMac, outPort, DEFAULT_RULE_PRIO);
-        }
-    }
-
-    public void setFlow(DeviceId switchDevice, MacAddress srcMac, MacAddress dstMac, PortNumber outPort, int flowPriority) {
-
-        /*  Define which packets(flows) to handle **/
-        TrafficSelector.Builder selectorBuilder = DefaultTrafficSelector.builder();
-        /*  if no src-Mac is defined forward disregarding source address (used in local switch rules) */
-        if (srcMac != null) {
-            selectorBuilder.matchEthSrc(srcMac);
-        }
-        selectorBuilder.matchEthDst(dstMac);
-
-        /*  Define what to do with the packet / flow **/
-        TrafficTreatment treatment = DefaultTrafficTreatment.builder()
-                .setOutput(outPort)
-                .build();
-
-        /*  add Flow-Priority, Timeout, Flags and some other meta information **/
-        ForwardingObjective forwardingObjective = DefaultForwardingObjective.builder()
-                .withSelector(selectorBuilder.build())
-                .withTreatment(treatment)
-                .withPriority(flowPriority)
-                .withFlag(ForwardingObjective.Flag.VERSATILE)
-                .fromApp(appId)
-                .add();
-
-        if (srcMac == null)
-            log.info("### Add Flow at Switch " + switchDevice.toString() + " dst: " + dstMac.toString() + " outPort: " + outPort.toString() + " ###");
-        if (srcMac != null)
-            log.info("### Add Flow at Switch " + switchDevice.toString() + " src: " + srcMac.toString() + " dst: " + dstMac.toString() + " outPort: " + outPort.toString() + " ###");
-
-        flowObjectiveService.forward(switchDevice, forwardingObjective);
-    }
-
     public Path bestPathInSet(Set<Path> paths) {
-        log.info("Starting now");
+
+        log.info("Starting to deploy flow rules for all available hosts.");
         // If the Set is empty, return null
         int count_paths = paths.size();
 
@@ -319,7 +276,7 @@ public class SmartPathManager implements ServiceSPM {
             minFreeonPath[i] = minFreeOnPath(path); // => The free capacity of the link with the least free capacity on the path.
             hopcount[i] = (int) path.cost(); // => the path-hopcount metric
             numberOfFlows[i] = numberOfFlowsOnPath(path); // => The number of flows set on this path.
-            log.info("Path-Log: No. " + i + ", nexthop: " + path.links().iterator().next().dst().deviceId() + ", minFree: " + minFreeonPath[i] + ", maxusage: " + maxLinkUsage[i] + ", NumberOfFLows: " + numberOfFlows[i] + ", hopcount: " + hopcount[i]);
+            log.info("Path-Log: No. " + i + ", minFree: " + minFreeonPath[i] + ", maxusage: " + maxLinkUsage[i] + ", NumberOfFLows: " + numberOfFlows[i] + ", hopcount: " + hopcount[i]);
             i++;
         }
 
@@ -375,13 +332,89 @@ public class SmartPathManager implements ServiceSPM {
         if (test_scenario == 4) {
             log.info("Path decision based on scenario 4: Using (Capacity-Load), Flowcount and Hopcount !!!");
 
-            int index = smallestNumberFromArray(fourthUseCase);
+            int index = maxNumberFromArray(fourthUseCase);
             bestPath = pathList[index];
             log.info("paper-log: Bestpath: " + bestPath.toString());
             return bestPath;
         }
 
         return bestPath;
+    }
+
+    public boolean flowRuleExists(MacAddress srcMac, MacAddress dstMac) {
+
+        // This block searches for already exiting flow rules for this host-pair
+        for (FlowRule flowRule : flowRuleService.getFlowEntriesById(appId)) {
+
+            MacAddress src = null;
+            MacAddress dst = null;
+
+            Criterion criterion = flowRule.selector().getCriterion(ETH_SRC);
+            if (criterion != null)
+                src = ((EthCriterion) criterion).mac();
+
+            criterion = flowRule.selector().getCriterion(ETH_DST);
+            if (criterion != null)
+                dst = ((EthCriterion) criterion).mac();
+
+            if (dst != null && src != null) {
+                if (srcMac.toString().matches(src.toString()) && dstMac.toString().matches(dst.toString())) {
+                    return true;
+                }
+                if (dstMac == dst && srcMac == src) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    public void setFLows(List<Link> linkList, MacAddress srcMac, MacAddress dstMac) {
+
+        for (Link link : linkList) {
+            log.info("### Flow-Direction: Forward (A->B) ###");
+            DeviceId srcSwitch = link.src().deviceId();
+            PortNumber outPort = link.src().port();
+            setFlow(srcSwitch, srcMac, dstMac, outPort, DEFAULT_RULE_PRIO);
+
+            log.info("### Flow-Direction: Forward (B->A) ###");
+            DeviceId dstSwitch = link.dst().deviceId();
+            outPort = link.dst().port();
+            setFlow(dstSwitch, dstMac, srcMac, outPort, DEFAULT_RULE_PRIO);
+        }
+    }
+
+    public void setFlow(DeviceId switchDevice, MacAddress srcMac, MacAddress dstMac, PortNumber outPort, int flowPriority) {
+
+        /*  Define which packets(flows) to handle **/
+        TrafficSelector.Builder selectorBuilder = DefaultTrafficSelector.builder();
+        /*  if no src-Mac is defined forward disregarding source address (used in local switch rules) */
+        if (srcMac != null) {
+            selectorBuilder.matchEthSrc(srcMac);
+        }
+        selectorBuilder.matchEthDst(dstMac);
+
+        /*  Define what to do with the packet / flow **/
+        TrafficTreatment treatment = DefaultTrafficTreatment.builder()
+                .setOutput(outPort)
+                .build();
+
+        /*  add Flow-Priority, Timeout, Flags and some other meta information **/
+        ForwardingObjective forwardingObjective = DefaultForwardingObjective.builder()
+                .withSelector(selectorBuilder.build())
+                .withTreatment(treatment)
+                .withPriority(flowPriority)
+                .withFlag(ForwardingObjective.Flag.VERSATILE)
+                .fromApp(appId)
+                .add();
+
+        if (srcMac == null)
+            log.info("### Add Flow at Switch " + switchDevice.toString() + " dst: " + dstMac.toString() + " outPort: " + outPort.toString() + " ###");
+        if (srcMac != null)
+            log.info("### Add Flow at Switch " + switchDevice.toString() + " src: " + srcMac.toString() + " dst: " + dstMac.toString() + " outPort: " + outPort.toString() + " ###");
+
+        flowObjectiveService.forward(switchDevice, forwardingObjective);
     }
 
     public double maxUsagePercentOnPath(Path path) {
@@ -415,8 +448,8 @@ public class SmartPathManager implements ServiceSPM {
             double capacity = capacityOfLink(link);
 
             minFree = capacity - load;
-            log.info("cap: " + capacity);
-            log.info("load: " + load);
+//            log.info("cap: " + capacity);
+//            log.info("load: " + load);
         }
 
         return minFree;
@@ -465,7 +498,7 @@ public class SmartPathManager implements ServiceSPM {
                         log.info("NullPointerException: " + npe.getLocalizedMessage());
                     }
                     if (portMatch) {
-                        log.info("### Count: Flow-Rule at Device " + link.src().toString() + ", matches Portno: " + link.src().port().toLong());
+//                        log.info("### Count: Flow-Rule at Device " + link.src().toString() + ", matches Portno: " + link.src().port().toLong());
                         flowRuleCounter++;
                     }
                 }
@@ -475,17 +508,33 @@ public class SmartPathManager implements ServiceSPM {
         return flowRuleCounter;
     }
 
-    public static int smallestNumberFromArray(int[] array) {
+    public int smallestNumberFromArray(int[] array) {
 
         OptionalInt max = IntStream.of(array).max();
         OptionalInt min = IntStream.of(array).min();
 
         int min_id = IntStream.of(array).boxed().collect(toList()).indexOf(min.getAsInt());
 
-        // IF the smallest int is equal with the biggest one, return -1, else return index of the smallest one.
-        if (max.getAsInt() == min.getAsInt()) return -1;
+        // IF the smallest int is equal with the biggest one, return 0, else return index of the smallest one.
+        if (max.getAsInt() == min.getAsInt())
+            return 0;
 
-        else return min_id;
+        else
+            return min_id;
+    }
+
+    public int maxNumberFromArray(int[] array) {
+
+        OptionalInt max = IntStream.of(array).max();
+        OptionalInt min = IntStream.of(array).min();
+
+        int max_id = IntStream.of(array).boxed().collect(toList()).indexOf(max.getAsInt());
+
+        // IF the smallest int is equal with the biggest one, return 0, else return index of the smallest one.
+        if (max.getAsInt() == min.getAsInt())
+            return 0;
+        else
+            return max_id;
     }
 
     public int capacityOfLink(Link link) {
@@ -501,11 +550,11 @@ public class SmartPathManager implements ServiceSPM {
         if (switchID.contentEquals("of:0000000000000bb9") || switchID.contentEquals("of:0000000000000bba") || switchID.contentEquals("of:0000000000000bbb") || switchID.contentEquals("of:0000000000000bbc") || switchID.contentEquals("of:0000000000000bbd") || switchID.contentEquals("of:0000000000000bbe") || switchID.contentEquals("of:0000000000000bbf") || switchID.contentEquals("of:0000000000000bc0"))
             rate = 5000000;
 
-        if (rate == 33000000)
-            log.info("It seems like there was no datarate information for this mac.");
-        else {
-            log.info("Got capacity rate: " + rate);
-        }
+//        if (rate == 33000000)
+//            log.info("It seems like there was no datarate information for this mac.");
+//        else {
+//            log.info("Got capacity rate: " + rate);
+//        }
 
         return rate;
     }
