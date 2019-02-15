@@ -209,16 +209,8 @@ public class SmartPathManager implements ServiceSPM {
                 Host dstHost = hostList.get(a);
                 DeviceId dstDeviceId = dstHost.location().deviceId();
 
-                /* exclude A==B combinations & ...**/
                 /*  exclude Host-AB-pairs connected to the same switch **/
                 if (!dstDeviceId.toString().equalsIgnoreCase(srcDeviceId.toString())) {
-
-                    // Deploy FlowRules for Flow (A->B,B->A)
-
-                    if (flowRuleExists(srcHostMac, dstHost.mac())) {
-                        log.info("### Flow already exists! Not deploying Flow-Rules for Host-combo (" + srcHostMac.toString() + ":" + dstHost.mac().toString() + ") again! ");
-                        return;
-                    }
 
                     log.info("Evaluating paths between host "+ srcHostMac.toString() +" and " + dstHost.mac().toString());
                     Set<Path> ps = topologyService.getPaths(topologyService.currentTopology(), srcDeviceId, dstDeviceId);
@@ -341,10 +333,10 @@ public class SmartPathManager implements ServiceSPM {
         return bestPath;
     }
 
-    public boolean flowRuleExists(MacAddress srcMac, MacAddress dstMac) {
+    public boolean flowRuleExists(DeviceId deviceId, MacAddress srcMac, MacAddress dstMac) {
 
         // This block searches for already exiting flow rules for this host-pair
-        for (FlowRule flowRule : flowRuleService.getFlowEntriesById(appId)) {
+        for (FlowRule flowRule : flowRuleService.getFlowEntriesByState(deviceId, FlowEntry.FlowEntryState.ADDED)) {
 
             MacAddress src = null;
             MacAddress dst = null;
@@ -376,12 +368,14 @@ public class SmartPathManager implements ServiceSPM {
             log.info("### Flow-Direction: Forward (A->B) ###");
             DeviceId srcSwitch = link.src().deviceId();
             PortNumber outPort = link.src().port();
-            setFlow(srcSwitch, srcMac, dstMac, outPort, DEFAULT_RULE_PRIO);
+            if (!flowRuleExists(srcSwitch, srcMac, dstMac))
+                setFlow(srcSwitch, srcMac, dstMac, outPort, DEFAULT_RULE_PRIO);
 
             log.info("### Flow-Direction: Forward (B->A) ###");
             DeviceId dstSwitch = link.dst().deviceId();
             outPort = link.dst().port();
-            setFlow(dstSwitch, dstMac, srcMac, outPort, DEFAULT_RULE_PRIO);
+            if (!flowRuleExists(srcSwitch, srcMac, dstMac))
+                setFlow(dstSwitch, dstMac, srcMac, outPort, DEFAULT_RULE_PRIO);
         }
     }
 
