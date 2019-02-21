@@ -42,9 +42,8 @@ import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
+import java.util.stream.DoubleStream;
 import java.util.stream.IntStream;
-import java.util.stream.Stream;
 
 import static java.util.stream.Collectors.toList;
 import static org.onosproject.net.flow.criteria.Criterion.Type.ETH_DST;
@@ -103,7 +102,7 @@ public class SmartPathManager implements ServiceSPM {
     // 2> Flowcount + Hopcount
     // 3> UsagePercent + FlowCount + Hopcount
     // 4> Cap - Load + Flowcount + Hopcount
-    private final int test_scenario = 4;
+    private final int test_scenario = 2;
 
     @Activate
     protected void activate() {
@@ -250,14 +249,14 @@ public class SmartPathManager implements ServiceSPM {
             return bestPath;
 
         double[] maxLinkUsage = new double[count_paths];
-        double[] minFreeonPath = new double[count_paths];
+        double[] freeBandwidthOnPath = new double[count_paths];
         int[] hopcount = new int[count_paths];
         int[] numberOfFlows = new int[count_paths];
         Path[] pathList = new Path[count_paths];
 
-        int[] secondUseCase = new int[count_paths];
-        int[] thirdUseCase = new int[count_paths];
-        int[] fourthUseCase = new int[count_paths];
+//        int[] secondUseCase = new int[count_paths];
+//        int[] thirdUseCase = new int[count_paths];
+//        int[] fourthUseCase = new int[count_paths];
 
         int i = 0;
 
@@ -265,19 +264,19 @@ public class SmartPathManager implements ServiceSPM {
 
             pathList[i] = path;
             maxLinkUsage[i] = maxUsagePercentOnPath(path); //=> The  usage percent of the link with the highest usage on the path.
-            minFreeonPath[i] = minFreeOnPath(path); // => The free capacity of the link with the least free capacity on the path.
+            freeBandwidthOnPath[i] = freeBandwidthOnPath(path); // => The free capacity of the link with the least free capacity on the path.
             hopcount[i] = (int) path.cost(); // => the path-hopcount metric
             numberOfFlows[i] = numberOfFlowsOnPath(path); // => The number of flows set on this path.
-            log.info("Path-Log: No. " + i + ", minFree: " + minFreeonPath[i] + ", maxusage: " + maxLinkUsage[i] + ", NumberOfFLows: " + numberOfFlows[i] + ", hopcount: " + hopcount[i]);
+            log.info("Path-Log: No. " + i + ", minFree: " + freeBandwidthOnPath[i] + ", maxusage: " + maxLinkUsage[i] + ", NumberOfFLows: " + numberOfFlows[i] + ", hopcount: " + hopcount[i]);
             i++;
         }
 
-        for (int j = 0; j < count_paths; j++) {
-
-            secondUseCase[j] = hopcount[j] + numberOfFlows[j];
-            thirdUseCase[j] = hopcount[j] + numberOfFlows[j] + (int) maxLinkUsage[j];
-            fourthUseCase[j] = hopcount[j] + numberOfFlows[j] + (int) minFreeonPath[j];
-        }
+//        for (int j = 0; j < count_paths; j++) {
+//
+//            secondUseCase[j] = hopcount[j] + numberOfFlows[j];
+//            thirdUseCase[j] = hopcount[j] + numberOfFlows[j] + (int) maxLinkUsage[j];
+//            fourthUseCase[j] = hopcount[j] + numberOfFlows[j] + (int) freeBandwithOnPath[j];
+//        }
 
         //Different evaluation scenarios:
         //1: Only Hopcount
@@ -306,34 +305,157 @@ public class SmartPathManager implements ServiceSPM {
         if (test_scenario == 2) {
             log.info("Path decision based on scenario 2: Flowcount + Hopcount is used !!!");
 
-            int index = smallestNumberFromArray(secondUseCase);
-            bestPath = pathList[index];
-            log.info("paper-log: Bestpath: " + bestPath.toString());
-            return bestPath;
+//            int index = smallestNumberFromArray(secondUseCase);
+//            bestPath = pathList[index];
+//            log.info("paper-log: Bestpath: " + bestPath.toString());
+//            return bestPath;
+
+            /** PATH DECISION: 2. compare amount of Flows ***/
+            if (smallestNumberFromArray(numberOfFlows) == -1) {
+                // -1 => All Paths have the same amount of Flows
+                /** PATH DECISION: 3. compare hopcount ***/
+                if (smallestNumberFromArray(hopcount) == -1) {
+                    // -1 => All Paths have the same amount of hops.
+                    log.info("### Pathes are all equal,(FlowRules:" + numberOfFlows[0] + ", hc:" + hopcount[0] + ") choosing the first one ###");
+                    log.info("paper-log: Paths are all equal. Choosing:" + bestPath.toString());
+                    return bestPath;
+                } else // NumberOfFlowRules are equal, but hopcount is different:
+                {
+                    int index = smallestNumberFromArray(hopcount);
+                    bestPath = pathList[index];
+                    log.info("thesis-log: Paths have the same amount of flows: " + numberOfFlows[0] + ", but hopcount differs. Choosing:" + bestPath.toString());
+                    return bestPath;
+                }
+            } else // NumberOfFlows differs:
+            {
+                int index = smallestNumberFromArray(numberOfFlows);
+                bestPath = pathList[index];
+                log.info("paper-log: Decision based on Flow-Count: Choosing the path with least flows(" + numberOfFlows[index] + "). Path: " + bestPath.toString());
+                return bestPath;
+            }
         }
 
         if (test_scenario == 3) {
             log.info("Path decision based on scenario 3: Using Usages, Flowcount and Hopcount !!!");
 
-            int index = smallestNumberFromArray(thirdUseCase);
-            bestPath = pathList[index];
-            log.info("paper-log: Bestpath: " + bestPath.toString());
-            return bestPath;
+//            int index = smallestNumberFromArray(thirdUseCase);
+//            bestPath = pathList[index];
+//            log.info("paper-log: Bestpath: " + bestPath.toString());
+//            return bestPath;
+
+            /** PATH DECISION: 1. compare usage-percent ***/
+            /* Use a helper method to get the index of the less-loaded path in the Load-Array */
+            if (smallestUsagePercentFromArray(maxLinkUsage) == -1) {
+                // -1 => All Paths have equal LinkUsages.
+                /** PATH DECISION: 2. compare amount of Flows ***/
+                if (smallestNumberFromArray(numberOfFlows) == -1) {
+                    // -1 => All Paths have the same amount of Flows
+                    /** PATH DECISION: 3. compare hopcount ***/
+                    if (smallestNumberFromArray(hopcount) == -1) {
+                        // -1 => All Paths have the same amount of hops.
+                        log.info("paper-log: Paths are all equal,(usage:" + maxLinkUsage[0] + ", FlowRules:" + numberOfFlows[0] + ", hc:" + hopcount[0] + ") choosing the first one: " + bestPath.toString());
+                        return bestPath;
+                    } else // All UsagePercents and NumberOfFlowRules are equal, but hopcount is different:
+                    {
+                        int index = smallestNumberFromArray(hopcount);
+                        bestPath = pathList[index];
+                        log.info("paper-log: All UsagePercents are similar: " + maxLinkUsage[0] + ", all paths have the same amount of flows: " + numberOfFlows[0] + ", but hopcount is differs. Path: " + bestPath.toString());
+                        return bestPath;
+                    }
+                } else // All UsagePercents are equal, but NumberOfFlows differs:
+                {
+                    int index = smallestNumberFromArray(numberOfFlows);
+                    log.info("paper-log: All UsagePercents are similar: " + maxLinkUsage[0] + ". Choosing the path with least flows(" + numberOfFlows[index] + ")");
+                    bestPath = pathList[index];
+                    return bestPath;
+                }
+            } else // UsagePercent differs
+            {
+                int index = smallestUsagePercentFromArray(maxLinkUsage);
+                log.info("paper-log: Choosing path with the lowest UsagePercent(" + maxLinkUsage[index] + ")");
+                bestPath = pathList[index];
+                return bestPath;
+            }
         }
 
         if (test_scenario == 4) {
             log.info("Path decision based on scenario 4: Using (Capacity-Load), Flowcount and Hopcount !!!");
 
-            int index = maxNumberFromArray(fourthUseCase);
-            bestPath = pathList[index];
-            log.info("paper-log: Bestpath: " + bestPath.toString());
-            return bestPath;
+//            int index = maxNumberFromArray(fourthUseCase);
+//            bestPath = pathList[index];
+//            log.info("paper-log: Bestpath: " + bestPath.toString());
+//            return bestPath;
+
+            /** PATH DECISION: 1. compare usage-percent ***/
+            /* Use a helper method to get the index of the less-loaded path in the Load-Array */
+            if (biggestMinFreeOnPath(freeBandwidthOnPath) == -1) {
+                // -1 => All Paths have equal LinkUsages.
+                /** PATH DECISION: 2. compare amount of Flows ***/
+                if (smallestNumberFromArray(numberOfFlows) == -1) {
+                    // -1 => All Paths have the same amount of Flows
+                    /** PATH DECISION: 3. compare hopcount ***/
+                    if (smallestNumberFromArray(hopcount) == -1) {
+                        // -1 => All Paths have the same amount of hops.
+                        log.info("paper-log: Paths are similar, Free capacity: " + freeBandwidthOnPath[0] + ", FlowRules:" + numberOfFlows[0] + ", hc:" + hopcount[0] + ") choosing the first one: " + bestPath.toString());
+                        return bestPath;
+                    } else // All UsagePercents and NumberOfFlowRules are equal, but hopcount is different:
+                    {
+                        int index = smallestNumberFromArray(hopcount);
+                        bestPath = pathList[index];
+                        log.info("paper-log: Paths are similar, Free capacity: " + freeBandwidthOnPath[0] + ", all paths have the same amount of flows: " + numberOfFlows[0] + ", but hopcount is differs. Choosing: " + bestPath.toString());
+                        return bestPath;
+                    }
+                } else // All UsagePercents are equal, but NumberOfFlows differs:
+                {
+                    int index = smallestNumberFromArray(numberOfFlows);
+                    bestPath = pathList[index];
+                    log.info("paper-log: Paths are similar, Free capacity: " + freeBandwidthOnPath[0] + ". Choosing the path with least flows(" + numberOfFlows[index] + ") Bestpath: " + bestPath.toString());
+                    return bestPath;
+                }
+            } else // minFree differs
+            {
+                int index = biggestMinFreeOnPath(freeBandwidthOnPath);
+                bestPath = pathList[index];
+                log.info("paper-log: Choosing path with the highest unused capacity!(" + freeBandwidthOnPath[index] + ") Bestpath: " + bestPath.toString());
+                return bestPath;
+            }
         }
 
         return bestPath;
     }
 
-    public boolean flowRuleExists(DeviceId deviceId, MacAddress srcMac, MacAddress dstMac) {
+
+    public int smallestUsagePercentFromArray(double[] array) {
+
+        OptionalDouble max = DoubleStream.of(array).max();
+        OptionalDouble min = DoubleStream.of(array).min();
+
+        int min_id = DoubleStream.of(array).boxed().collect(toList()).indexOf(min.getAsDouble());
+
+        // If the smallest and the biggest values are more close as 5,  return -1, else return index of the smallest one.
+        log.info("## UsagePercent comparison: " + max.getAsDouble() + " vs. " + min.getAsDouble());
+
+        if (Math.abs(max.getAsDouble() - min.getAsDouble()) < 0.05)
+            return -1;
+        else
+            return min_id;
+    }
+
+    public int biggestMinFreeOnPath(double[] array) {
+
+        OptionalDouble max = DoubleStream.of(array).max();
+        OptionalDouble min = DoubleStream.of(array).min();
+
+        int max_id = DoubleStream.of(array).boxed().collect(toList()).indexOf(max.getAsDouble());
+
+        // 2000 is approx 3%. Which is used as saturation of a link is not always the same.
+        if (Math.abs(max.getAsDouble() - min.getAsDouble()) < 2000)
+            return -1;
+        else
+            return max_id;
+    }
+
+    private boolean flowRuleExists(DeviceId deviceId, MacAddress srcMac, MacAddress dstMac) {
 
         // This block searches for already exiting flow rules for this host-pair
         for (FlowRule flowRule : flowRuleService.getFlowEntriesByState(deviceId, FlowEntry.FlowEntryState.ADDED)) {
@@ -374,7 +496,7 @@ public class SmartPathManager implements ServiceSPM {
             log.info("### Flow-Direction: Forward (B->A) ###");
             DeviceId dstSwitch = link.dst().deviceId();
             outPort = link.dst().port();
-            if (!flowRuleExists(srcSwitch, srcMac, dstMac))
+            if (!flowRuleExists(dstSwitch, srcMac, dstMac))
                 setFlow(dstSwitch, dstMac, srcMac, outPort, DEFAULT_RULE_PRIO);
         }
     }
@@ -432,16 +554,20 @@ public class SmartPathManager implements ServiceSPM {
         return maxUsage;
     }
 
-    public double minFreeOnPath(Path path) {
+    public double freeBandwidthOnPath(Path path) {
 
-        double minFree = -7411.0;
+        double minFree = 0;
 
         for (Link link : path.links()) {
 
             double load = loadOnLink(link);
             double capacity = capacityOfLink(link);
 
-            minFree = capacity - load;
+            double free = capacity - load;
+
+            if (free > 0)
+                minFree = minFree + free;
+
 //            log.info("cap: " + capacity);
 //            log.info("load: " + load);
         }
@@ -511,25 +637,25 @@ public class SmartPathManager implements ServiceSPM {
 
         // IF the smallest int is equal with the biggest one, return 0, else return index of the smallest one.
         if (max.getAsInt() == min.getAsInt())
-            return 0;
+            return -1;
 
         else
             return min_id;
     }
 
-    public int maxNumberFromArray(int[] array) {
-
-        OptionalInt max = IntStream.of(array).max();
-        OptionalInt min = IntStream.of(array).min();
-
-        int max_id = IntStream.of(array).boxed().collect(toList()).indexOf(max.getAsInt());
-
-        // IF the smallest int is equal with the biggest one, return 0, else return index of the smallest one.
-        if (max.getAsInt() == min.getAsInt())
-            return 0;
-        else
-            return max_id;
-    }
+//    public int maxNumberFromArray(int[] array) {
+//
+//        OptionalInt max = IntStream.of(array).max();
+//        OptionalInt min = IntStream.of(array).min();
+//
+//        int max_id = IntStream.of(array).boxed().collect(toList()).indexOf(max.getAsInt());
+//
+//        // IF the smallest int is equal with the biggest one, return 0, else return index of the smallest one.
+//        if (max.getAsInt() == min.getAsInt())
+//            return 0;
+//        else
+//            return max_id;
+//    }
 
     public int capacityOfLink(Link link) {
         // Default-Rate, if there is no reported capacity. A  mid-quality link is assumed.
@@ -593,6 +719,8 @@ public class SmartPathManager implements ServiceSPM {
         public void event(TopologyEvent event) {
             List<Event> reasons = event.reasons();
             Set<HostId> hostIds = new HashSet<HostId>();
+
+            log.info("Topology Changed Detected");
 
             if (reasons != null) {
                 reasons.forEach(re -> {
